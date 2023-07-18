@@ -6,6 +6,7 @@ import Std.Lean.HashSet
 import Std.Data.RBMap
 import Std.Data.Array.Basic
 
+import Mathlib.Tactic
 
 inductive Expr : Type
 | add : Expr → Expr → Expr
@@ -66,14 +67,16 @@ deriving Repr
 
 abbrev StackProgram := List StackIR
 
-def StackProgram.eval (p : StackProgram) :=
-  let rec evalRec : StackProgram → Stack → Nat
+
+def StackProgram.evalRec : StackProgram → Stack → Nat
   | [], s => s.head! -- For our purposes, a stack progam is invalid if this operation fails
   | .push n :: irs, s => evalRec irs (n :: s)
-  | .add :: irs, s => evalRec irs ((s[0]! + s[1]!) :: s.tail!.tail!)
-  | .mul :: irs, s => evalRec irs ((s[0]! * s[1]!) :: s.tail!.tail!)
+  | .add :: (.push m) :: (.push n) :: irs, s => evalRec irs ((m + n) :: s)
+  | .add :: _, _ => 1234556789 -- arbitrary behavior for ill-formed stack
+  | .mul :: (.push m) :: (.push n) :: irs, s => evalRec irs ((m * n) :: s)
+  | .mul :: _, _ => 1234556789 -- arbitrary behavior for ill-formed stack
 
-  evalRec p []
+def StackProgram.eval (p : StackProgram) : Nat := evalRec p []
 
 
 def Expr.toStackProgram : Expr → StackProgram
@@ -262,18 +265,34 @@ def main : IO Unit := IO.println s!"hello!"
       - (more advanced) https://hal.science/hal-03255472v3
 
 -/
+@[simp]
+theorem eval_add_eq_eval_plus_eval (e1 e2 : Expr) : (Expr.add e1 e2).eval = e1.eval + e2.eval := by rfl
 
--- Show correctness of StackIR interpreter
+open StackIR Expr in
+theorem sp_add_stack_eq_sp_fst_concat_sp_snd (e1 e2 : Expr) : toStackProgram (Expr.add e1 e2) = toStackProgram e1 ++ toStackProgram e2 ++ [StackIR.add] := by rfl
+
+open Expr in
+-- Show correctness of StackIR compiler
 -- Theorem: For all Exprs, evaluating is equivalent to compiling to StackProgram and evaluating that StackProgram
-theorem expr_to_stack_compile_ok (e : Expr) : e.eval = e.toStackProgram.eval := by
-  induction e
-  sorry
-  sorry
-  sorry
+theorem expr_to_stack_compile_ok' (e : Expr) (sp : StackProgram) (s : Stack) : StackProgram.evalRec (e.toStackProgram ++ sp) s = StackProgram.evalRec sp (e.eval :: s) := by
+  induction e generalizing sp s with
+  | lit n => 
+      rfl
+  | add e1 e2 ih1 ih2 => 
+      rw [eval_add_eq_eval_plus_eval]
+      rw [sp_add_stack_eq_sp_fst_concat_sp_snd]
+      rw [List.append_assoc (toStackProgram e1) (toStackProgram e2) [StackIR.add]]
+      have h1 := ih1 (toStackProgram e2 ++ [StackIR.add] ++ sp) s
+      rw [h1]
+  | mul e1 e2 ih1 ih2 => sorry
+    
+
+
+#check List.append_assoc
 
 
 -- For all StackPrograms: evaluating is equivalent to compiling to AsmIR and evaluating.
-theorem stack_to_asm_compile_ok : (sp : StackProgram) : sp.eval = sp.toAsmProgram.eval := by
+theorem stack_to_asm_compile_ok' : (sp : StackProgram) : sp.eval = sp.toAsmProgram.eval := by
   sorry -- I haven't written an eval function for AsmProgram yet
 
 
