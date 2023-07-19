@@ -89,10 +89,10 @@ def Expr.toStackProgram : Expr → StackProgram
 #eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram
 
 inductive Asm : Type where
-| push : Nat →  Asm
-| pop : Asm
-| add : String → String → Asm
-| imul : String → String → Asm
+| push (n : Nat)
+| pop
+| add
+| imul
 deriving Repr
 
 abbrev AsmProgram := List Asm
@@ -100,9 +100,9 @@ abbrev AsmProgram := List Asm
 def StackProgram.toAsmProgram (sp : StackProgram) := 
   let rec toAsmRec : StackProgram → AsmProgram
   | [] => []
-  | .push n :: sirs => Asm.push n :: toAsmRec sirs
-  | .add :: sirs => .add "0x8" "0x10" :: Asm.pop :: toAsmRec sirs 
-  | .mul :: sirs => .imul "0x8" "0x10" :: Asm.pop :: toAsmRec sirs 
+  | .push n :: sis => Asm.push n :: toAsmRec sis
+  | .add :: sis => .add :: Asm.pop :: toAsmRec sis 
+  | .mul :: sis => .imul :: Asm.pop :: toAsmRec sis 
 
   toAsmRec sp
 #eval (1 * 2 + 3 * 4 : Expr).toStackProgram.toAsmProgram
@@ -114,8 +114,8 @@ def AsmProgram.toAsmString : AsmProgram → String
   (match i with
   | .push n => s!"push ${n}" 
   | .pop => "pop"
-  | .add r s => s!"add {r}(%rsp) {s}(%rsp)" -- there was something kinda wrong with how i'm thinking about add, ngl, but i think i fixed it
-  | .imul r s => s!"imul {r}(%rsp) {s}(%rsp)"
+  | .add => s!"add 0x8(%rsp) 0x10(%rsp)" -- there was something kinda wrong with how i'm thinking about add, ngl, but i think i fixed it
+  | .imul => s!"imul 0x8(%rsp) 0x10(%rsp)"
   )
   ++ "\n" ++ toAsmString is
 
