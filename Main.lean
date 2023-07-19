@@ -326,9 +326,22 @@ theorem expr_to_stack_compile_ok' (e : Expr) (sp : StackProgram) (s : Stack) : S
       rw [expr_to_stack_compile_ok']
       rfl
 
+def AsmProgram.evalRec : AsmProgram → Stack → Nat
+| [], s => s.head!
+| (.push n) :: is, s => evalRec is (n :: s)
+| .pop :: is, _ :: s => evalRec is s
+| .pop :: is, s => evalRec is s -- arbitrary behavior for bad stack
+| .add :: is, n :: m :: s => evalRec is ((m + n) :: s)
+| .add :: is, s => evalRec is s
+| .imul :: is, n :: m :: s => evalRec is ((m * n) :: s)
+| .imul :: is, s => evalRec is s
+
+def AsmProgram.eval (p : AsmProgram) : Nat := evalRec p []
+
+
 
 -- For all StackPrograms: evaluating is equivalent to compiling to AsmIR and evaluating.
-theorem stack_to_asm_compile_ok' : (sp : StackProgram) : sp.eval = sp.toAsmProgram.eval := by
+theorem stack_to_asm_compile_ok  (sp : StackProgram) : sp.eval = sp.toAsmProgram.eval := by
   sorry -- I haven't written an eval function for AsmProgram yet
 
 /- Asm doesn't have any way of keeping track of the numbers. I guess I might provide a stack for my eval function to work-/
