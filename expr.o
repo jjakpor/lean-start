@@ -1,0 +1,17 @@
+push $1
+push $6
+add 0x8(%rsp) 0x10(%rsp)
+pop
+push $2
+imul 0x8(%rsp) 0x10(%rsp)
+pop
+push $3
+push $4
+push $5
+add 0x8(%rsp) 0x10(%rsp)
+pop
+imul 0x8(%rsp) 0x10(%rsp)
+pop
+add 0x8(%rsp) 0x10(%rsp)
+pop
+mov %rsp %rax

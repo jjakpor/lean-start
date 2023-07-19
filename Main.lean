@@ -67,14 +67,14 @@ deriving Repr
 
 abbrev StackProgram := List StackIR
 
-
+@[simp]
 def StackProgram.evalRec : StackProgram → Stack → Nat
   | [], s => s.head! -- For our purposes, a stack progam is invalid if this operation fails
   | .push n :: irs, s => evalRec irs (n :: s)
-  | .add :: (.push m) :: (.push n) :: irs, s => evalRec irs ((m + n) :: s)
-  | .add :: _, _ => 1234556789 -- arbitrary behavior for ill-formed stack
-  | .mul :: (.push m) :: (.push n) :: irs, s => evalRec irs ((m * n) :: s)
-  | .mul :: _, _ => 1234556789 -- arbitrary behavior for ill-formed stack
+  | .add :: irs, n :: m :: s => evalRec irs ((m + n) :: s)
+  | .add :: irs, s => evalRec irs s -- arbitrary behavior for ill-formed stack
+  | .mul :: irs, n :: m :: s => evalRec irs ((m * n) :: s)
+  | .mul :: irs, s => evalRec irs s -- arbitrary behavior for ill-formed stack
 
 def StackProgram.eval (p : StackProgram) : Nat := evalRec p []
 
@@ -85,7 +85,7 @@ def Expr.toStackProgram : Expr → StackProgram
 | mul e1 e2 => toStackProgram e1 ++ toStackProgram e2 ++ [StackIR.mul]
 
 #eval (1 * 2 + 3 * 4 : Expr).toStackProgram
-#eval (1 * 2 + 3 * 4 : Expr).toStackProgram.eval == 1 * 2 + 3 * 4
+#eval (1 * 2 + 3 * 4 : Expr).toStackProgram.eval
 #eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram
 
 inductive Asm : Type where
@@ -271,6 +271,15 @@ theorem eval_add_eq_eval_plus_eval (e1 e2 : Expr) : (Expr.add e1 e2).eval = e1.e
 open StackIR Expr in
 theorem sp_add_stack_eq_sp_fst_concat_sp_snd (e1 e2 : Expr) : toStackProgram (Expr.add e1 e2) = toStackProgram e1 ++ toStackProgram e2 ++ [StackIR.add] := by rfl
 
+
+theorem eval_mul_eq_eval_times_eval (e1 e2 : Expr) : (Expr.mul e1 e2).eval = e1.eval * e2.eval := by rfl
+
+
+open StackIR Expr in
+theorem sp_mul_stack_eq_sp_fst_concat_sp_snd (e1 e2 : Expr) : toStackProgram (Expr.mul e1 e2) = toStackProgram e1 ++ toStackProgram e2 ++ [StackIR.mul] := by rfl
+
+
+
 open Expr in
 -- Show correctness of StackIR compiler
 -- Theorem: For all Exprs, evaluating is equivalent to compiling to StackProgram and evaluating that StackProgram
@@ -281,14 +290,26 @@ theorem expr_to_stack_compile_ok' (e : Expr) (sp : StackProgram) (s : Stack) : S
   | add e1 e2 ih1 ih2 => 
       rw [eval_add_eq_eval_plus_eval]
       rw [sp_add_stack_eq_sp_fst_concat_sp_snd]
-      rw [List.append_assoc (toStackProgram e1) (toStackProgram e2) [StackIR.add]]
-      have h1 := ih1 (toStackProgram e2 ++ [StackIR.add] ++ sp) s
+      /-(toStackProgram e1)  (toStackProgram e2) [StackIR.add]]-/
+      have h1 := (ih1 (toStackProgram e2 ++ [StackIR.add] ++ sp) s)
+      rw [List.append_assoc (toStackProgram e1), List.append_assoc]
       rw [h1]
-  | mul e1 e2 ih1 ih2 => sorry
-    
+      have h2 := (ih2 ([StackIR.add] ++ sp) ((eval e1) :: s))
+      rw [List.append_assoc (toStackProgram e2)]
+      rw [h2]
+      rfl
+  | mul e1 e2 ih1 ih2 =>
+      rw [eval_mul_eq_eval_times_eval]
+      rw [sp_mul_stack_eq_sp_fst_concat_sp_snd]
+      have h1 := (ih1 (toStackProgram e2 ++ [StackIR.mul] ++ sp) s)
+      rw [List.append_assoc (toStackProgram e1), List.append_assoc]
+      rw [h1]
+      have h2 := (ih2 ([StackIR.mul] ++ sp) ((eval e1) :: s))
+      rw [List.append_assoc (toStackProgram e2)]
+      rw [h2]
+      rfl
+  
 
-
-#check List.append_assoc
 
 
 -- For all StackPrograms: evaluating is equivalent to compiling to AsmIR and evaluating.
