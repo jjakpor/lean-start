@@ -91,7 +91,7 @@ def Expr.toStackProgram : Expr → StackProgram
 inductive Asm : Type where
 | push : Nat →  Asm
 | pop : Asm
-| add : String → String → Asm -- The nats are the displacements from rsp here and in imul
+| add : String → String → Asm
 | imul : String → String → Asm
 deriving Repr
 
@@ -309,11 +309,26 @@ theorem expr_to_stack_compile_ok' (e : Expr) (sp : StackProgram) (s : Stack) : S
       rw [h2]
       rfl
   
-
+  theorem eval_eq_eval_rec_empty_stack (p : StackProgram) : p.eval = p.evalRec [] := by rfl
+  theorem expr_to_stack_compile_ok (e : Expr) : e.toStackProgram.eval = e.eval := by
+  cases e with
+  | lit n => rfl
+  | add e1 e2 => 
+      rw [eval_eq_eval_rec_empty_stack]
+      have : Expr.toStackProgram (Expr.add e1 e2) = Expr.toStackProgram (Expr.add e1 e2) ++ [] := by simp
+      rw [this]
+      rw [expr_to_stack_compile_ok']
+      rfl
+  | mul e1 e2 => 
+      rw [eval_eq_eval_rec_empty_stack]
+      have : Expr.toStackProgram (Expr.mul e1 e2) = Expr.toStackProgram (Expr.mul e1 e2) ++ [] := by simp
+      rw [this]
+      rw [expr_to_stack_compile_ok']
+      rfl
 
 
 -- For all StackPrograms: evaluating is equivalent to compiling to AsmIR and evaluating.
 theorem stack_to_asm_compile_ok' : (sp : StackProgram) : sp.eval = sp.toAsmProgram.eval := by
   sorry -- I haven't written an eval function for AsmProgram yet
 
-
+/- Asm doesn't have any way of keeping track of the numbers. I guess I might provide a stack for my eval function to work-/
