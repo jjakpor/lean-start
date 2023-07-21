@@ -88,36 +88,97 @@ def Expr.toStackProgram : Expr → StackProgram
 #eval (1 * 2 + 3 * 4 : Expr).toStackProgram.eval
 #eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram
 
+def Nat.toHexString (n : Nat) : String := "0x" ++ String.mk (Nat.toDigits 16 n)
+namespace Asm
+/- A representation of x86-64 instructions as in
+https://web.stanford.edu/class/archive/cs/cs107/cs107.1238/resources/x86-64-reference.pdf 
+-/
+
+inductive OkSrc : Type where
+| imm (n : Nat) -- Immediate
+| mem (n : Nat) -- A memory address
+| reg (r : String) -- A register
+| indirect (r : String) -- (r) where r is a register
+| indirectDisp (d : Nat) (r : String) -- d(r) where r is a register
+| indirectScaledIndex (d : Nat) (rb : String) (ri : String) (s : {x : Nat // x = 1 ∨ x = 2 ∨ x = 4 ∨ x = 8}) -- d(rb, ri, s)
+deriving Repr
+
+def OkSrc.toString : OkSrc → String
+| imm n => "$" ++ n.toHexString
+| mem n => n.toHexString
+| reg r => r
+| indirect r => s!"({r})"
+| indirectDisp d r => s!"{d.toHexString}({r})"
+| indirectScaledIndex d rb ri s => s!"{d.toHexString}({rb}, {ri}, {s})"
+
+instance : ToString OkSrc where
+  toString := OkSrc.toString
+
+inductive OkDst : Type where
+| mem (n : Nat) : OkDst-- A memory address
+| reg (r : String) : OkDst -- A register
+| indirect (r : String) : OkDst -- (r) where r is a register
+| indirectDisp (disp : Nat) (r : String) : OkDst -- d(r) where r is a register
+| indirectScaledIndex (d : Nat) (rb : String) (ri : String) (s : {x : Nat // x = 1 ∨ x = 2 ∨ x = 4 ∨ x = 8}) : OkDst -- d(rb, ri, s)
+deriving Repr
+
+def OkDst.toString : OkDst → String
+| mem n => n.toHexString
+| reg r => r
+| indirect r => s!"({r})"
+| indirectDisp d r => s!"{d.toHexString}({r})"
+| indirectScaledIndex d rb ri s => s!"{d.toHexString}({rb}, {ri}, {s})"
+
+
+instance : ToString OkDst where
+  toString := OkDst.toString
+
+
+end Asm
+
+open Asm in
 inductive Asm : Type where
 | push (n : Nat)
-| pop
-| add
-| imul
+| pop (dst : OkDst)
+| add (src : OkSrc) (dst : OkDst) 
+| imul (src : OkSrc) (dst : OkDst)
 deriving Repr
+
 
 abbrev AsmProgram := List Asm
 
+open Asm in
+#check Asm.add (OkSrc.indirectDisp 0x8 "%rsp") (Asm.OkDst.indirectDisp 0x10 "%rsp")
+
+open Asm in
 def StackProgram.toAsmProgram (sp : StackProgram) := 
   let rec toAsmRec : StackProgram → AsmProgram
   | [] => []
   | .push n :: sis => Asm.push n :: toAsmRec sis
-  | .add :: sis => .add :: Asm.pop :: toAsmRec sis 
-  | .mul :: sis => .imul :: Asm.pop :: toAsmRec sis 
-
+  | .add :: sis => .add  (.indirectDisp 0x8 "%rsp") (.indirectDisp 0x10 "%rsp") :: Asm.pop (.reg "%rax") :: toAsmRec sis 
+  | .mul :: sis => .imul (.indirectDisp 0x8 "%rsp") (.indirectDisp 0x10 "%rsp") :: Asm.pop (.reg "%rax") :: toAsmRec sis 
   toAsmRec sp
+
 #eval (1 * 2 + 3 * 4 : Expr).toStackProgram.toAsmProgram
 #eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram.toAsmProgram
+
 
 def AsmProgram.toAsmString : AsmProgram → String
 | [] => "mov %rsp %rax"
 | i :: is => 
-  (match i with
-  | .push n => s!"push ${n}" 
-  | .pop => "pop"
-  | .add => s!"add 0x8(%rsp) 0x10(%rsp)" -- there was something kinda wrong with how i'm thinking about add, ngl, but i think i fixed it
-  | .imul => s!"imul 0x8(%rsp) 0x10(%rsp)"
-  )
+    (match i with
+    | .push n => s!"push ${n.toHexString}" 
+    | .pop dst => s!"pop {dst}"
+    | .add src dst => s!"add {src} {dst}" 
+    | .imul src dst=> s!"imul {src} {dst}"
+    )
   ++ "\n" ++ toAsmString is
+
+/- An interpreter for AsmProgram -/
+  def AsmProgram.eval (p : AsmProgram) : Nat := by sorry
+  -- Can I have one finite map Σ⋆ → ℕ to represent registers
+  -- And another finite map ℕ → ℕ to rrepresent memory  
+  
 
 
 #eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram.toAsmProgram.toAsmString
@@ -131,7 +192,6 @@ def demoFile : System.FilePath := ⟨"./expr.o"⟩
 
 
 #eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).compile demoFile
-
 
 
 
@@ -326,18 +386,21 @@ theorem expr_to_stack_compile_ok' (e : Expr) (sp : StackProgram) (s : Stack) : S
       rw [expr_to_stack_compile_ok']
       rfl
 
-def AsmProgram.evalRec : AsmProgram → Stack → Nat
-| [], s => s.head!
-| (.push n) :: is, s => evalRec is (n :: s)
-| .pop :: is, _ :: s => evalRec is s
-| .pop :: is, s => evalRec is s -- arbitrary behavior for bad stack
-| .add :: is, n :: m :: s => evalRec is ((m + n) :: s)
-| .add :: is, s => evalRec is s
-| .imul :: is, n :: m :: s => evalRec is ((m * n) :: s)
-| .imul :: is, s => evalRec is s
+def FinMap (α β : Type _) :=  α → Option β 
+namespace FinMap
 
-def AsmProgram.eval (p : AsmProgram) : Nat := evalRec p []
+variable {α β  : Type _} [DecidableEq α] (map : FinMap α β)
 
+def lookup (key : α) : Option β  := map key
+def insert (key : α) (val : β) : FinMap α β := fun k => if k = key then val else map k
+
+theorem insert_key : (map.insert key val).lookup key = some val := by sorry
+theorem insert_key_frame (key' : α) (h : key ≠ key') : (map.insert key val).lookup key' = map.lookup key' := sorry
+
+end FinMap
+
+
+-- I think my assembly interpreter will shove things into 
 
 
 -- For all StackPrograms: evaluating is equivalent to compiling to AsmIR and evaluating.
@@ -345,3 +408,7 @@ theorem stack_to_asm_compile_ok  (sp : StackProgram) : sp.eval = sp.toAsmProgram
   sorry -- I haven't written an eval function for AsmProgram yet
 
 /- Asm doesn't have any way of keeping track of the numbers. I guess I might provide a stack for my eval function to work-/
+
+
+
+
