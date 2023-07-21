@@ -1,17 +1,17 @@
-push $1
-push $6
+push $0x1
+push $0x6
 add 0x8(%rsp) 0x10(%rsp)
-pop
-push $2
+pop %rax
+push $0x2
 imul 0x8(%rsp) 0x10(%rsp)
-pop
-push $3
-push $4
-push $5
+pop %rax
+push $0x3
+push $0x4
+push $0x5
 add 0x8(%rsp) 0x10(%rsp)
-pop
+pop %rax
 imul 0x8(%rsp) 0x10(%rsp)
-pop
+pop %rax
 add 0x8(%rsp) 0x10(%rsp)
-pop
+pop %rax
 mov %rsp %rax
