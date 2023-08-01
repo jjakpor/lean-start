@@ -17,7 +17,7 @@ deriving Repr
 /- Exercise 1: Expr syntax and semantics -/
 
 /- Exercise 1a: write an evaluation function. it should pass the following tests -/
-def Expr.eval : Expr → Nat
+def Expr.eval : Expr → Int
 | .add e1 e2 => Expr.eval e1 + Expr.eval e2
 | .mul e1 e2 => Expr.eval e1 * Expr.eval e2
 | .lit n => n
@@ -31,6 +31,7 @@ def e2 : Expr := .add (.mul (.lit 3) (.lit 4)) (.lit 2)
 /- Exercise 1b: write an OfNat instance for Expr. the following expressions should then type check: -/
 instance : OfNat Expr n where
   ofNat := Expr.lit n
+
 
 
 #eval (3 : Expr)
@@ -57,18 +58,17 @@ instance : Mul Expr := ⟨Expr.mul⟩  -- Just experimenting with different synt
 
   bonus: add more fun to the Expr type, like `let` expressions or `if .. then .. else`. extend Expr.eval and Expr.compile
 -/
-abbrev Stack := List Nat
+abbrev Stack := List Int
 
 inductive StackIR : Type where
 | add : StackIR
 | mul : StackIR
-| push : Nat → StackIR
+| push : Int → StackIR
 deriving Repr
 
 abbrev StackProgram := List StackIR
 
-@[simp]
-def StackProgram.evalRec : StackProgram → Stack → Nat
+def StackProgram.evalRec : StackProgram → Stack → Int
   | [], s => s.head! -- For our purposes, a stack progam is invalid if this operation fails
   | .push n :: irs, s => evalRec irs (n :: s)
   | .add :: irs, n :: m :: s => evalRec irs ((m + n) :: s)
@@ -76,7 +76,7 @@ def StackProgram.evalRec : StackProgram → Stack → Nat
   | .mul :: irs, n :: m :: s => evalRec irs ((m * n) :: s)
   | .mul :: irs, s => evalRec irs s -- arbitrary behavior for ill-formed stack
 
-def StackProgram.eval (p : StackProgram) : Nat := evalRec p []
+def StackProgram.eval (p : StackProgram) : Int := evalRec p []
 
 
 def Expr.toStackProgram : Expr → StackProgram
@@ -89,37 +89,19 @@ def Expr.toStackProgram : Expr → StackProgram
 #eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram
 
 def Nat.toHexString (n : Nat) : String := "0x" ++ String.mk (Nat.toDigits 16 n)
+def Int.toHexString (n : Int) : String := (if n < 0 then "-" else "") ++ Nat.toHexString n.natAbs
 namespace Asm
 /- A representation of x86-64 instructions as in
 https://web.stanford.edu/class/archive/cs/cs107/cs107.1238/resources/x86-64-reference.pdf 
 -/
 
-inductive OkSrc : Type where
-| imm (n : Nat) -- Immediate
+
+inductive OkDst : Type where
 | mem (n : Nat) -- A memory address
 | reg (r : String) -- A register
 | indirect (r : String) -- (r) where r is a register
-| indirectDisp (d : Nat) (r : String) -- d(r) where r is a register
-| indirectScaledIndex (d : Nat) (rb : String) (ri : String) (s : {x : Nat // x = 1 ∨ x = 2 ∨ x = 4 ∨ x = 8}) -- d(rb, ri, s)
-deriving Repr
-
-def OkSrc.toString : OkSrc → String
-| imm n => "$" ++ n.toHexString
-| mem n => n.toHexString
-| reg r => r
-| indirect r => s!"({r})"
-| indirectDisp d r => s!"{d.toHexString}({r})"
-| indirectScaledIndex d rb ri s => s!"{d.toHexString}({rb}, {ri}, {s})"
-
-instance : ToString OkSrc where
-  toString := OkSrc.toString
-
-inductive OkDst : Type where
-| mem (n : Nat) : OkDst-- A memory address
-| reg (r : String) : OkDst -- A register
-| indirect (r : String) : OkDst -- (r) where r is a register
-| indirectDisp (disp : Nat) (r : String) : OkDst -- d(r) where r is a register
-| indirectScaledIndex (d : Nat) (rb : String) (ri : String) (s : {x : Nat // x = 1 ∨ x = 2 ∨ x = 4 ∨ x = 8}) : OkDst -- d(rb, ri, s)
+| indirectDisp (d : Int) (r : String) -- d(r) where r is a register
+| indirectScaledIndex (d : Int) (rb : String) (ri : String) (s : {x : Nat // x = 1 ∨ x = 2 ∨ x = 4 ∨ x = 8}) -- d(rb, ri, s)
 deriving Repr
 
 def OkDst.toString : OkDst → String
@@ -133,12 +115,22 @@ def OkDst.toString : OkDst → String
 instance : ToString OkDst where
   toString := OkDst.toString
 
+inductive OkSrc : Type where
+| imm (n : Int) -- Immediate
+| src (okDst : OkDst) -- All other values mirror OkDst
+deriving Repr
 
+def OkSrc.toString : OkSrc → String
+| imm n => "$" ++ n.toHexString
+| src (okDst) => okDst.toString
+
+instance : ToString OkSrc where
+  toString := OkSrc.toString
 end Asm
 
 open Asm in
 inductive Asm : Type where
-| push (n : Nat)
+| push (n : Int)
 | pop (dst : OkDst)
 | add (src : OkSrc) (dst : OkDst) 
 | imul (src : OkSrc) (dst : OkDst)
@@ -148,45 +140,140 @@ deriving Repr
 abbrev AsmProgram := List Asm
 
 open Asm in
-#check Asm.add (OkSrc.indirectDisp 0x8 "%rsp") (Asm.OkDst.indirectDisp 0x10 "%rsp")
+#check Asm.add (.src (.indirectDisp 0x8 "%rsp")) (.indirectDisp 0x10 "%rsp")
+
 
 open Asm in
-def StackProgram.toAsmProgram (sp : StackProgram) := 
-  let rec toAsmRec : StackProgram → AsmProgram
-  | [] => []
-  | .push n :: sis => Asm.push n :: toAsmRec sis
-  | .add :: sis => .add  (.indirectDisp 0x8 "%rsp") (.indirectDisp 0x10 "%rsp") :: Asm.pop (.reg "%rax") :: toAsmRec sis 
-  | .mul :: sis => .imul (.indirectDisp 0x8 "%rsp") (.indirectDisp 0x10 "%rsp") :: Asm.pop (.reg "%rax") :: toAsmRec sis 
-  toAsmRec sp
-
-#eval (1 * 2 + 3 * 4 : Expr).toStackProgram.toAsmProgram
-#eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram.toAsmProgram
-
-
-def AsmProgram.toAsmString : AsmProgram → String
+@[simp]
+def StackProgram.toAsmProgram : StackProgram → AsmProgram
+| [] => []
+| .push n :: sis => Asm.push n :: toAsmProgram sis
+| .add :: sis => .add  (.src (.indirectDisp 0x8 "%rsp")) (.indirectDisp 0x10 "%rsp") :: .pop (.reg "%rax") :: toAsmProgram sis 
+| .mul :: sis => .imul (.src (.indirectDisp 0x8 "%rsp")) (.indirectDisp 0x10 "%rsp") :: .pop (.reg "%rax") :: toAsmProgram sis 
+ 
+def AsmProgram.toString : AsmProgram → String
 | [] => "mov %rsp %rax"
 | i :: is => 
     (match i with
     | .push n => s!"push ${n.toHexString}" 
     | .pop dst => s!"pop {dst}"
     | .add src dst => s!"add {src} {dst}" 
-    | .imul src dst=> s!"imul {src} {dst}"
-    )
-  ++ "\n" ++ toAsmString is
+    | .imul src dst=> s!"imul {src} {dst}")
+  ++ "\n" ++ toString is
+
+#eval (1 * 2 + 3 * 4 : Expr).toStackProgram.toAsmProgram
+#eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram.toAsmProgram.toString
+
+
+
+def FinMap (α β : Type _) :=  α → Option β 
+namespace FinMap
+
+variable {α β  : Type _} [DecidableEq α] (map : FinMap α β)
+
+def lookup (key : α) : Option β  := map key
+def insert (key : α) (val : β) : FinMap α β := fun k => if k = key then val else map k
+
+theorem insert_key : (map.insert key val).lookup key = some val := by sorry
+theorem insert_key_frame (key' : α) (h : key ≠ key') : (map.insert key val).lookup key' = map.lookup key' := by sorry
+
+end FinMap
+
+
+abbrev RegMap : Type := FinMap String Int
+abbrev MemMap : Type := FinMap Nat Int
+
+section RegMem
+
+variable {regs : RegMap} 
+variable {mem : MemMap}
+
+def readReg (r : String) : Int := (regs.lookup r).get! -- TODO: maybe make proof-based
+def readMem (addr : Nat) : Int := (mem.lookup addr).get!
+#check readReg
+def writeToReg (n : Int) (r : String) : RegMap := regs.insert r n
+#check writeToReg
+def writeToMem (n : Int) (addr : Nat) : MemMap := mem.insert addr n
+
+
+
+def calcIndirectScaledIndex {regs : RegMap}  (d : Int) (rb : String) (ri : String) (s : {x : Nat // x = 1 ∨ x = 2 ∨ x = 4 ∨ x = 8}) : Nat := 
+  Int.natAbs (d + (@readReg regs rb) + s * (@readReg regs ri))
+
+def writeToDst (n : Int) (dst : Asm.OkDst) : RegMap × MemMap :=
+match dst with
+| .reg r => (@writeToReg regs n r, mem)
+| .mem addr => (regs, @writeToMem mem n addr)
+| .indirect r => (regs, @writeToMem mem n (@readReg regs r).natAbs) -- just fixing type error. Memory addresses are nonneg but mem vals can be neg
+| .indirectDisp d r => (regs, @writeToMem mem n ((@readReg regs r) + d).natAbs)
+| .indirectScaledIndex d rb ri s => (regs, @writeToMem mem n (@calcIndirectScaledIndex regs d rb ri s))
+
+def getFromSrc (dstStyleSrc : Asm.OkDst) : Int :=
+  match dstStyleSrc with
+  | .reg r => @readReg regs r
+  | .mem addr => @readMem mem addr
+  | .indirect r => @readMem mem (@readReg regs r).natAbs
+  | .indirectDisp d r => @readMem mem ((@readReg regs r) + d).natAbs
+  | .indirectScaledIndex d rb ri s=> @ readMem mem (@calcIndirectScaledIndex regs d rb ri s)
+
+def mov (src : Asm.OkSrc) (dst : Asm.OkDst) : (RegMap × MemMap) :=
+  match src with
+  | .imm n => @writeToDst regs mem n dst
+  | .src dstStyleSrc => @writeToDst regs mem (@getFromSrc regs mem dstStyleSrc) dst
+
+/- binSrcDst represents applying a binary operator to src and dst, storing the results in dst. -/
+def binSrcDst (src : Asm.OkSrc) (dst : Asm.OkDst) (f : Int → Int → Int) : (RegMap × MemMap) :=
+  let op1 : Int := match src with
+  | .imm n => n
+  | .src dstStyleSrc => @getFromSrc regs mem dstStyleSrc
+
+  let op2 : Int := @getFromSrc regs mem dst
+
+  @mov regs mem (.imm (f op1 op2)) dst
+
+end RegMem
+ 
+def AsmProgram.evalRec (p : AsmProgram) (regs : RegMap) (mem : MemMap) :=
+      match p with
+      | [] => @readReg regs "%rax" -- At end of instructions, get return value from %rax
+      | i :: is => 
+          match i with
+          | .push n => 
+           -- To push, move n to memory address pointed to by %rsp and decrease %rsp's value by 0x8
+            Id.run do
+            let mut state := (regs, mem)
+            state := @mov state.fst state.snd (.imm n) (.indirect "%rsp")
+            state := @mov state.fst state.snd (.imm ((@readReg regs "%rsp") - 0x8)) (.reg "%rsp")
+            evalRec is state.fst state.snd
+          | .pop dst => Id.run do
+           -- To pop, go 8 bytes above what %rsp points to. Move it to dst, and increase %rsp's value by 0x8
+            let mut state := (regs, mem)
+            state := @mov state.fst state.snd (.src (.indirectDisp 0x8 "%rsp")) dst
+            state := @mov state.fst state.snd (.imm ((@readReg regs "%rsp") + 0x8)) (.reg "%rsp")
+            evalRec is state.fst state.snd
+          | .add src dst => 
+              -- To add, add the value stored for src to the value in dst
+              let state := (@binSrcDst regs mem src dst fun e1 e2 => e1 + e2)
+              evalRec is state.fst state.snd 
+          | .imul src dst => 
+              -- To mul
+              let state := (@binSrcDst regs mem src dst fun e1 e2 => e1 * e2)
+              evalRec is state.fst state.snd  
 
 /- An interpreter for AsmProgram -/
-  def AsmProgram.eval (p : AsmProgram) : Nat := by sorry
+  def AsmProgram.eval (p : AsmProgram) : Int := 
   -- Can I have one finite map Σ⋆ → ℕ to represent registers
   -- And another finite map ℕ → ℕ to rrepresent memory  
-  
+      -- we need regs to contain rsp and rax having something off the bat
+      evalRec p (fun r => if r == "%rsp" then some 0xfffffff else if r == "%rax" then some 0x0 else none) 
+      (fun a => if a == 0xfffffff then some 0x0 else none)
 
-
-#eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram.toAsmProgram.toAsmString
+#eval ((1 + 6) * 2 + 3 * (4 + 5) : Expr).toStackProgram.toAsmProgram.toString
 
 open IO.FS (writeFile)
 def Expr.compile : Expr → System.FilePath → IO Unit :=
   fun expr => 
-    fun fp => writeFile fp expr.toStackProgram.toAsmProgram.toAsmString
+    fun fp => writeFile fp expr.toStackProgram.toAsmProgram.toString
 
 def demoFile : System.FilePath := ⟨"./expr.o"⟩ 
 
@@ -326,17 +413,17 @@ def main : IO Unit := IO.println s!"hello!"
 
 -/
 @[simp]
-theorem eval_add_eq_eval_plus_eval (e1 e2 : Expr) : (Expr.add e1 e2).eval = e1.eval + e2.eval := by rfl
+lemma eval_add_eq_eval_plus_eval (e1 e2 : Expr) : (Expr.add e1 e2).eval = e1.eval + e2.eval := by rfl
 
 open StackIR Expr in
-theorem sp_add_stack_eq_sp_fst_concat_sp_snd (e1 e2 : Expr) : toStackProgram (Expr.add e1 e2) = toStackProgram e1 ++ toStackProgram e2 ++ [StackIR.add] := by rfl
+lemma sp_add_stack_eq_sp_fst_concat_sp_snd (e1 e2 : Expr) : toStackProgram (Expr.add e1 e2) = toStackProgram e1 ++ toStackProgram e2 ++ [StackIR.add] := by rfl
 
 
-theorem eval_mul_eq_eval_times_eval (e1 e2 : Expr) : (Expr.mul e1 e2).eval = e1.eval * e2.eval := by rfl
+lemma eval_mul_eq_eval_times_eval (e1 e2 : Expr) : (Expr.mul e1 e2).eval = e1.eval * e2.eval := by rfl
 
 
 open StackIR Expr in
-theorem sp_mul_stack_eq_sp_fst_concat_sp_snd (e1 e2 : Expr) : toStackProgram (Expr.mul e1 e2) = toStackProgram e1 ++ toStackProgram e2 ++ [StackIR.mul] := by rfl
+lemma sp_mul_stack_eq_sp_fst_concat_sp_snd (e1 e2 : Expr) : toStackProgram (Expr.mul e1 e2) = toStackProgram e1 ++ toStackProgram e2 ++ [StackIR.mul] := by rfl
 
 
 
@@ -369,7 +456,7 @@ theorem expr_to_stack_compile_ok' (e : Expr) (sp : StackProgram) (s : Stack) : S
       rw [h2]
       rfl
   
-  theorem eval_eq_eval_rec_empty_stack (p : StackProgram) : p.eval = p.evalRec [] := by rfl
+  lemma eval_eq_eval_rec_empty_stack (p : StackProgram) : p.eval = p.evalRec [] := by rfl
   theorem expr_to_stack_compile_ok (e : Expr) : e.toStackProgram.eval = e.eval := by
   cases e with
   | lit n => rfl
@@ -386,29 +473,79 @@ theorem expr_to_stack_compile_ok' (e : Expr) (sp : StackProgram) (s : Stack) : S
       rw [expr_to_stack_compile_ok']
       rfl
 
-def FinMap (α β : Type _) :=  α → Option β 
-namespace FinMap
-
-variable {α β  : Type _} [DecidableEq α] (map : FinMap α β)
-
-def lookup (key : α) : Option β  := map key
-def insert (key : α) (val : β) : FinMap α β := fun k => if k = key then val else map k
-
-theorem insert_key : (map.insert key val).lookup key = some val := by sorry
-theorem insert_key_frame (key' : α) (h : key ≠ key') : (map.insert key val).lookup key' = map.lookup key' := sorry
-
-end FinMap
 
 
 -- I think my assembly interpreter will shove things into 
 
 
 -- For all StackPrograms: evaluating is equivalent to compiling to AsmIR and evaluating.
-theorem stack_to_asm_compile_ok  (sp : StackProgram) : sp.eval = sp.toAsmProgram.eval := by
-  sorry -- I haven't written an eval function for AsmProgram yet
 
-/- Asm doesn't have any way of keeping track of the numbers. I guess I might provide a stack for my eval function to work-/
+/- I think I want to keep track of the registers and memory. And then say if you take a stack program and 
+run the concantenation of it and some assembly program, that's equivalent to running that assembly program with the state generated by running a compiled version of the stack program
+-/
+/-
+theorem stack_to_asm_compile_ok' (sp : StackProgram) (asm : AsmProgram) (regs : RegMap) (mem : MemMap) :
+(sp.toAsmProgram ++ asm).evalRec regs mem = asm
+-/
+
+-- Sorry, this lemma is unhelpful for now. Also I would be shocked if it weren't built in already
+lemma list_cons_append_assoc {α : Type} (x : α) (xs ys : List α) : (x :: xs) ++ ys = x :: (xs ++ ys) := by simp
+
+lemma asm_compile_cons_eq_compile_append_compile (x : StackIR) (xs : StackProgram): StackProgram.toAsmProgram (x :: xs) = StackProgram.toAsmProgram [x] ++ xs.toAsmProgram := by
+-- induction xs generalizing x with
+induction xs generalizing x with
+| nil =>  simp
+| cons y ys ih => 
+    rw [ih y]
+    cases x 
+    simp
+    rw [ih y]
+    simp
+    rw [ih y]
+    simp
+    rw [ih y]
+
+   
 
 
+  
+
+
+
+-- I think the assembly interpreter proof equivalent is running the stack program and putting the result into [%rsp]
+theorem stack_to_asm_compile_ok' (sp : StackProgram) (ap : AsmProgram) (spIsNonEmpty : sp ≠ []) :
+   (sp.toAsmProgram ++ ap).eval = AsmProgram.eval ((.push sp.eval) :: ap) := by
+   induction sp generalizing ap with
+   | nil => contradiction
+   | cons x xs ih => 
+    rw [asm_compile_cons_eq_compile_append_compile]
+    simp
+    -- why am i stuck?
+
+
+
+
+      -- the recursive call in AsmRec exposes the new state
+      -- in AsmProgram.evalRec you do some assignments based on the first instruction
+      --  and then work with just the rest of the instructions.
+      -- I really want to work with x directly
+
+-- is it the case that StackProgram.toAsmProgram (x :: xs) = [x].toAsmProgram ++ xs.toAsmProgram?
+-- because if that held I could just use the IH twice maybe
+-- yeah that doesn't work, I think, but I was able to prove the lemma
+      
+   
+
+   
+-- ap.evalRec (writeToDst sp.eval Asm.OkDst.indirect "%rsp").fst (writeToDst sp.eval Asm.OkDst.indirect "%rsp").snd := by
+
+
+theorem stack_to_asm_compile_ok  (sp : StackProgram) (spIsNonEmpty : sp ≠ []): sp.eval = sp.toAsmProgram.eval := by
+  induction sp with
+  | nil => rfl
+  | cons x xs ih => 
+  
+  -- Unfold eval into evalrec with whatever is in registers
+  -- need to build a correspondence between what happens on stack to what happens in registers
 
 
